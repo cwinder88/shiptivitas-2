@@ -2,135 +2,100 @@ import express from 'express';
 import Database from 'better-sqlite3';
 
 const app = express();
-
 app.use(express.json());
 
+// Root route
 app.get('/', (req, res) => {
-  return res.status(200).send({'message': 'SHIPTIVITY API. Read documentation to see API docs'});
+  return res.status(200).send({
+    message: 'SHIPTIVITY API. Read documentation to see API docs'
+  });
 });
 
-// We are keeping one connection alive for the rest of the life application for simplicity
+// Keep one SQLite connection alive
 const db = new Database('./clients.db');
 
-// Don't forget to close connection when server gets terminated
+// Close DB on exit
 const closeDb = () => db.close();
 process.on('SIGTERM', closeDb);
 process.on('SIGINT', closeDb);
 
 /**
  * Validate id input
- * @param {any} id
  */
-const validateId = (id) => {
-  if (Number.isNaN(id)) {
-    return {
-      valid: false,
-      messageObj: {
-      'message': 'Invalid id provided.',
-      'long_message': 'Id can only be integer.',
-      },
-    };
-  }
-  const client = db.prepare('select * from clients where id = ? limit 1').get(id);
-  if (!client) {
-    return {
-      valid: false,
-      messageObj: {
-      'message': 'Invalid id provided.',
-      'long_message': 'Cannot find client with that id.',
-      },
-    };
-  }
-  return {
-    valid: true,
-  };
+function validateId(id) {
+  return !isNaN(parseInt(id));
 }
 
 /**
- * Validate priority input
- * @param {any} priority
+ * GET all clients (load board)
  */
-const validatePriority = (priority) => {
-  if (Number.isNaN(priority)) {
-    return {
-      valid: false,
-      messageObj: {
-      'message': 'Invalid priority provided.',
-      'long_message': 'Priority can only be positive integer.',
-      },
-    };
-  }
-  return {
-    valid: true,
-  }
-}
+app.get('/clients', (req, res) => {
+  const stmt = db.prepare(`
+    SELECT id, name, description, status, "order"
+    FROM clients
+    ORDER BY status ASC, "order" ASC
+  `);
 
-/**
- * Get all of the clients. Optional filter 'status'
- * GET /api/v1/clients?status={status} - list all clients, optional parameter status: 'backlog' | 'in-progress' | 'complete'
- */
-app.get('/api/v1/clients', (req, res) => {
-  const status = req.query.status;
-  if (status) {
-    // status can only be either 'backlog' | 'in-progress' | 'complete'
-    if (status !== 'backlog' && status !== 'in-progress' && status !== 'complete') {
-      return res.status(400).send({
-        'message': 'Invalid status provided.',
-        'long_message': 'Status can only be one of the following: [backlog | in-progress | complete].',
-      });
-    }
-    const clients = db.prepare('select * from clients where status = ?').all(status);
-    return res.status(200).send(clients);
-  }
-  const statement = db.prepare('select * from clients');
-  const clients = statement.all();
-  return res.status(200).send(clients);
+  const clients = stmt.all();
+  return res.status(200).json(clients);
 });
 
 /**
- * Get a client based on the id provided.
- * GET /api/v1/clients/{client_id} - get client by id
+ * UPDATE swimlane status
  */
-app.get('/api/v1/clients/:id', (req, res) => {
-  const id = parseInt(req.params.id , 10);
-  const { valid, messageObj } = validateId(id);
-  if (!valid) {
-    res.status(400).send(messageObj);
+app.put('/clients/:id/status', (req, res) => {
+  const id = req.params.id;
+  const { status } = req.body;
+
+  if (!validateId(id)) {
+    return res.status(400).json({ error: 'Invalid ID' });
   }
-  return res.status(200).send(db.prepare('select * from clients where id = ?').get(id));
+
+  const stmt = db.prepare(`
+    UPDATE clients
+    SET status = ?
+    WHERE id = ?
+  `);
+
+  stmt.run(status, id);
+
+  return res.status(200).json({
+    message: 'Status updated',
+    id,
+    status
+  });
 });
 
 /**
- * Update client information based on the parameters provided.
- * When status is provided, the client status will be changed
- * When priority is provided, the client priority will be changed with the rest of the clients accordingly
- * Note that priority = 1 means it has the highest priority (should be on top of the swimlane).
- * No client on the same status should not have the same priority.
- * This API should return list of clients on success
- *
- * PUT /api/v1/clients/{client_id} - change the status of a client
- *    Data:
- *      status (optional): 'backlog' | 'in-progress' | 'complete',
- *      priority (optional): integer,
- *
+ * UPDATE card order
  */
-app.put('/api/v1/clients/:id', (req, res) => {
-  const id = parseInt(req.params.id , 10);
-  const { valid, messageObj } = validateId(id);
-  if (!valid) {
-    res.status(400).send(messageObj);
+app.put('/clients/:id/order', (req, res) => {
+  const id = req.params.id;
+  const { order } = req.body;
+
+  if (!validateId(id)) {
+    return res.status(400).json({ error: 'Invalid ID' });
   }
 
-  let { status, priority } = req.body;
-  let clients = db.prepare('select * from clients').all();
-  const client = clients.find(client => client.id === id);
+  const stmt = db.prepare(`
+    UPDATE clients
+    SET "order" = ?
+    WHERE id = ?
+  `);
 
-  /* ---------- Update code below ----------*/
+  stmt.run(order, id);
 
-
-
-  return res.status(200).send(clients);
+  return res.status(200).json({
+    message: 'Order updated',
+    id,
+    order
+  });
 });
 
-app.listen(3001);
-console.log('app running on port ', 3001);
+/**
+ * Start server
+ */
+const PORT = 3001;
+app.listen(PORT, () => {
+  console.log(`Backend running on port ${PORT}`);
+});
